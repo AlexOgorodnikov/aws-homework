@@ -26,22 +26,27 @@
             security_group: default
             vpc_subnet_id: subnet-0c3b88d08d2ebd335
           state: present
+          tags:
+            foo: instance
+      register: ec2
 
     - name: add host builder
       add_host:
         name: "{{ ec2.instances[0].public.ip }}"
         groups: mvn
-      with_items: "{{ ec2.istances }}"
+      with_items: "{{ ec2.instances }}"
 
     - name: add host prod
       add_host:
         name: "{{ ec2.instances[1].public.ip }}"
         groups: tom
-      with_items: "{{ ec2.istances }}"
+      with_items: "{{ ec2.instances }}"
 
 - name: Repo and cache servers update
   hosts: all
-  become: yes 
+  remote_user: ubuntu
+  become: yes
+  become_user: root
 
   tasks:
   - name: repo and cahe update
@@ -49,12 +54,14 @@
       update_cache: yes
       force_apt_get: yes
       cache_valid_time: 3600
-      
+
 - name: create app file ready to deploy
   hosts: mvn
+  remote_user: ubuntu
   become: yes
+  become_user: root
 
-  tasks:  
+  tasks:
   - name: ensure git, jdk, maven packages is present
     apt:
       name: "{{item}}"
@@ -62,8 +69,8 @@
     with_items:
       - git
       - default-jdk
-      - maven  
-  
+      - maven
+
   - name: make directory for git pull and packages
     file:
       path: /home/app
@@ -71,39 +78,33 @@
   - name: clone code from git
     git:
       repo: 'https://github.com/boxfuse/boxfuse-sample-java-war-hello.git'
-      dest: /home/app  
+      dest: /home/app
   - name: make war file
     shell:
       chdir: /home/app
       cmd: mvn package
+  - name: copy war to bucket
+    community.aws.s3_sync:
+      bucket: ansible-bucket-hw1
+      file_root: /home/app/target/hello-1.0.war
+
 
 - name: install tomcat
   hosts: tom
+  remote_user: ubuntu
   become: yes
-    
-  tasks: 
+  become_user: root
+
+  tasks:
   - name: ensure tomcat is present
     apt:
       name: tomcat9
       state: present
 
-- name: deploy app
-  hosts: mvn
-  become: yes
-
-  tasks:
-  - name: copy to local
-    synchronize:
-      src: /home/app/target/hello-1.0.war
-      dest: /tmp/hello-1.0.war
-      mode: pull
-
-- name: deploy app
-  hosts: tom
-  become: yes
-
-  tasks:
-  - name: copy to tom
-    synchronize:
-      src: /tmp/hello-1.0.war
-      dest: /var/lib/tomcat9/webapps/hello-1.0.war
+  - name: Deploy war file
+    aws_s3:
+      bucket: "ansible-bucket-hw1"
+      object: "hello-1.0.war"
+      dest: "/var/lib/tomcat9/webapps/hello-1.0.war"
+      mode: get
+      overwrite: yes
